@@ -1,5 +1,5 @@
-# tsu-azure-automation-account
-Laboratórios para praticar o Azure automation account no Azure
+# Tech speed Up - azure-automation-account
+Laboratório para praticar o Azure automation account no Azure
 
 
 # Laboratório 1 - Azure Automation Account
@@ -75,7 +75,6 @@ Portal → VM alvo → **Access control (IAM)** → **Add role assignment**
 - Role: **Virtual Machine Contributor**  
 - Assign access to: **User, group, or service principal**  
 - Select members: escolha a **Managed Identity** do Automation Account  
-- Salve  
 
 ---
 
@@ -98,9 +97,9 @@ Portal → Automation Account → **Process Automation → Runbooks → Create a
 - Runtime: **PowerShell 7.2**  
 - Tags: `env:lab`  
 
-**O que este script faz (em português claro):**
+**O que este script faz:**
 1. Lê três variáveis do Automation (`SubscriptionId`, `ResourceGroupName`, `VmName`) para saber exatamente **qual VM** operar.
-2. Valida que essas variáveis existem e não estão vazias (evita erro bobo na hora da execução).
+2. Valida que essas variáveis existem e não estão vazias.
 3. Faz login com a **Managed Identity** da sua Automation Account (RBAC mínimo na VM).
 4. Pergunta ao Azure qual é o **estado atual** da VM (ligada/desligada) usando a API (`instanceView`).
 5. Se a VM **já estiver ligada**, ele não faz nada (idempotente).
@@ -179,7 +178,7 @@ Portal → Automation Account → **Process Automation → Runbooks → Create a
 - Runtime: **PowerShell 7.2**  
 - Tags: `env:lab`  
 
-**O que este script faz (em português claro):**
+**O que este script faz:**
 1. Lê as mesmas três variáveis para identificar a VM.  
 2. Faz login com a Managed Identity.  
 3. Checa o estado atual (instanceView).  
@@ -241,8 +240,6 @@ Write-Output "Deallocate acionado (202/200)."
 
 **Observações úteis:**  
 - **Deallocate** libera a computação (e o IP dinâmico), mas mantém o disco.  
-- Se você usa **IP público estático**, ele permanece associado, mas não é cobrado enquanto a VM não está usando? Depende do tipo — valide na sua oferta.  
-- Se quiser apenas **Stop** (sem deallocate), muda o endpoint para `/powerOff`.
 
 ---
 
@@ -286,7 +283,4 @@ No **Azure Portal**:
 
 ---
 
-## Conclusão
 
-Você acabou de montar um ciclo simples e eficiente para ligar/desligar uma VM no horário comercial usando **Azure Automation + Managed Identity + RBAC mínimo**.  
-A base está pronta: se quiser evoluir, dá para adicionar lógica por **tags**, gerar alertas de falha, ou mesmo integrar com **Event Grid** para reações em tempo real. Bom trabalho! 💪
