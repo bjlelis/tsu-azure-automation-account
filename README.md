@@ -98,6 +98,14 @@ Portal → Automation Account → **Process Automation → Runbooks → Create a
 - Runtime: **PowerShell 7.2**  
 - Tags: `env:lab`  
 
+**O que este script faz (em português claro):**
+1. Lê três variáveis do Automation (`SubscriptionId`, `ResourceGroupName`, `VmName`) para saber exatamente **qual VM** operar.
+2. Valida que essas variáveis existem e não estão vazias (evita erro bobo na hora da execução).
+3. Faz login com a **Managed Identity** da sua Automation Account (RBAC mínimo na VM).
+4. Pergunta ao Azure qual é o **estado atual** da VM (ligada/desligada) usando a API (`instanceView`).
+5. Se a VM **já estiver ligada**, ele não faz nada (idempotente).
+6. Se estiver desligada, chama a **API de Start** e finaliza.
+
 ```powershell
 param([object]$WebhookData)
 $ErrorActionPreference = 'Stop'
@@ -108,7 +116,7 @@ function Assert-Var($name, $value) {
   }
 }
 
-# Variáveis (sanitizadas)
+# Variáveis
 $SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
 $ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
 $VmNameRaw            = Get-AutomationVariable -Name 'VmName'
@@ -125,12 +133,13 @@ try { [void][Guid]::Parse($SubscriptionId) } catch { throw "SubscriptionId invá
 
 Write-Output "Start-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
 
+# Login com a Managed Identity vinculada à Automation Account
 Connect-AzAccount -Identity | Out-Null
 
 $vmId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Compute/virtualMachines/$VmName"
 $api = "2023-07-01"
 
-# InstanceView
+# Lê o estado atual da VM
 $ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
 if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
   throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
@@ -144,13 +153,23 @@ if ($power -eq 'VM running') {
   return
 }
 
-# Start VM
+# Aciona start
 $resp = Invoke-AzRest -Path "$vmId/start?api-version=$api" -Method POST
 if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
   throw "Falha ao iniciar VM. HTTP $($resp.StatusCode) $($resp.Content)"
 }
 Write-Output "Start acionado (202/200)."
 ```
+
+**Por que usar `Invoke-AzRest`?**  
+Funciona de forma direta com a API do Azure e evita dependência de muitos módulos. É rápido, previsível e fácil de debugar (você vê o **StatusCode** e o **Content**).
+
+**Dicas rápidas de troubleshooting:**
+- Se aparecer erro de permissão, verifique o **RBAC** da Managed Identity na VM (Virtual Machine Contributor).  
+- Confirme se as variáveis estão corretas (sem espaço extra/linha quebrada).  
+- O nome da VM é **case-insensitive**, mas o **RG** e o **SubscriptionId** precisam estar 100% corretos.  
+
+---
 
 ### B) Stop-VM.ps1
 Portal → Automation Account → **Process Automation → Runbooks → Create a runbook**
@@ -159,6 +178,13 @@ Portal → Automation Account → **Process Automation → Runbooks → Create a
 - Tipo: **PowerShell**  
 - Runtime: **PowerShell 7.2**  
 - Tags: `env:lab`  
+
+**O que este script faz (em português claro):**
+1. Lê as mesmas três variáveis para identificar a VM.  
+2. Faz login com a Managed Identity.  
+3. Checa o estado atual (instanceView).  
+4. Se a VM **já estiver desligada/dealocada**, ele não faz nada.  
+5. Caso contrário, chama a **API de Deallocate** (economiza computação; o disco continua sendo cobrado).  
 
 ```powershell
 param([object]$WebhookData)
@@ -185,12 +211,13 @@ $VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
 
 Write-Output "Stop-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
 
+# Login com a Managed Identity vinculada à Automation Account
 Connect-AzAccount -Identity | Out-Null
 
 $vmId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Compute/virtualMachines/$VmName"
 $api = "2023-07-01"
 
-# InstanceView
+# Lê o estado atual da VM
 $ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
 if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
   throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
@@ -204,13 +231,18 @@ if ($power -eq 'VM deallocated' -or $power -eq 'VM stopped') {
   return
 }
 
-# Deallocate
+# Aciona deallocate
 $resp = Invoke-AzRest -Path "$vmId/deallocate?api-version=$api" -Method POST
 if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
   throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode) $($resp.Content)"
 }
 Write-Output "Deallocate acionado (202/200)."
 ```
+
+**Observações úteis:**  
+- **Deallocate** libera a computação (e o IP dinâmico), mas mantém o disco.  
+- Se você usa **IP público estático**, ele permanece associado, mas não é cobrado enquanto a VM não está usando? Depende do tipo — valide na sua oferta.  
+- Se quiser apenas **Stop** (sem deallocate), muda o endpoint para `/powerOff`.
 
 ---
 
@@ -253,3 +285,8 @@ No **Azure Portal**:
 - Isso mantém o ambiente limpo e sob controle do ponto de vista **financeiro**.  
 
 ---
+
+## Conclusão
+
+Você acabou de montar um ciclo simples e eficiente para ligar/desligar uma VM no horário comercial usando **Azure Automation + Managed Identity + RBAC mínimo**.  
+A base está pronta: se quiser evoluir, dá para adicionar lógica por **tags**, gerar alertas de falha, ou mesmo integrar com **Event Grid** para reações em tempo real. Bom trabalho! 💪
