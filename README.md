@@ -211,3 +211,45 @@ if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
 }
 Write-Output "Deallocate acionado (202/200)."
 ```
+
+---
+
+### 6. Criar Schedules
+
+Crie dois agendamentos para ligar e desligar a VM:
+
+**A) Start-Weekdays-0730**  
+- Hora: **07:30**  
+- Time zone: **(UTC-03:00) São Paulo** (ou *E. South America Standard Time*)  
+- Recurrence: **Daily** (todos os dias) ou **Weekly** (Seg–Sex) → escolha conforme necessidade  
+- Expiração: **Sem expiração** (ou defina data limite se for POC)  
+
+**B) Stop-Weekdays-1830**  
+- Hora: **18:30**  
+- Time zone: **(UTC-03:00) São Paulo** (ou *E. South America Standard Time*)  
+- Recurrence: **Daily** (todos os dias) ou **Weekly** (Seg–Sex) → escolha conforme necessidade  
+- Expiração: **Sem expiração** (ou defina data limite se for POC)  
+
+---
+
+### 7. Vincular Schedules aos Runbooks
+
+No **Azure Portal**:  
+- Vá em **Runbooks → Start-VM → Link to schedule → Selecionar Start-Weekdays-0730**.  
+- Vá em **Runbooks → Stop-VM → Link to schedule → Selecionar Stop-Weekdays-1830**.  
+
+---
+
+### 8. Testes e validação
+
+- **A)** Com a VM desligada, abra o runbook **Start-VM → Start**. A VM deverá ligar após alguns segundos.  
+- **B)** Com a VM ligada, abra o runbook **Stop-VM → Start**. A VM deverá ser desligada após alguns segundos.  
+
+---
+
+### 9. Limpeza do ambiente
+
+- Excluir o **Resource Group** e todos os recursos criados neste lab (mesmo que em outros RGs).  
+- Isso mantém o ambiente limpo e sob controle do ponto de vista **financeiro**.  
+
+---
