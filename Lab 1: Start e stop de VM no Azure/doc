@@ -1,0 +1,214 @@
+Laboratório 1
+Ligar e desligar uma VM no horário comercial usando Azure Automation Account. Objetivo: manter uma VM ligada das 07:30 às 18:30 e desligada no restante do tempo, de forma automática e confiável.
+
+Pré-requisitos:
+1 - Conta no Azure com permissão para criar recursos (RG, Automation Account, RBAC).
+2 - Uma VM no Azure (use o tier mais barato para testes).
+3 - Dica: crie tudo em um Resource Group de laboratório para facilitar a limpeza depois.
+
+Arquitetura, o que iremos usar para executar a tarefa:
+1 - Automation Account com Managed Identity (System Assigned)
+2 - RBAC: a identidade gerenciada recebe Virtual Machine Operator no escopo da VM
+3 - Runbooks PowerShell (7.2): Start-VM.ps1 e Stop-VM.ps1
+4 - Schedules: 07:30 → executa Start-VM // 18:30 → executa Stop-VM // Fuso: São Paulo (UTC-03:00)
+
+
+Passo a passo:
+
+1 - Criar um resource group para o Lab pelo portal ou CLI
+
+
+2 - Criar a Automation account pelo portal ou CLI:
+Portal do Azure:
+Create a resource → Automation → Automation Account.
+Nome: aa-lab-startstop // Resource Group: seu RG // Region: a mesma da VM.
+Em Identity, habilite System assigned.
+Em networking, mantenha public access
+Defina tags, é opcional, mas também é uma boa prática, aqui será env:lab
+
+
+3 - Conceder RBAC mínimo à Managed Identity
+
+Pelo Azure Portal:
+Na VM alvo → Access control (IAM) → Add role assignment:
+- Role: Virtual Machine Contributor (mínimo necessário para Start/Stop/Deallocate).
+  Assign access to: User, group, or service principal.
+  Select members: escolha a Managed Identity do seu Automation Account (aa-lab-startstop).
+  Aplique e salve
+
+5 - Criar Automation variables em Automation Account → Shared Resources → Variables → Add a variable:
+SubscriptionId do tipo string e adicione o valor da sua subscription
+ResourceGroupName do tipo string e adicione o nome do seu resource group da sua VM
+VmName do tipo string e coloque o nome da sua VM
+
+6 - Criar os runbooks de start e stop:
+
+Portal → 'Sua' Automation account → Process Automation → Runbooks → Create a runbook
+
+A) Start:
+Start-VM.ps1
+- name: start-vm
+  runbook type: PowerShell
+  Runtime version: Powershell 7.2
+  tags: env:lab
+  script:
+param([object]$WebhookData)
+$ErrorActionPreference = 'Stop'
+
+function Assert-Var($name, $value) {
+  if ([string]::IsNullOrWhiteSpace([string]$value)) {
+    throw "A variável de Automation '$name' está vazia ou ausente."
+  }
+}
+
+# ===== Variáveis (sanitizadas) =====
+$SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
+$ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
+$VmNameRaw            = Get-AutomationVariable -Name 'VmName'
+
+Assert-Var 'SubscriptionId'    $SubscriptionIdRaw
+Assert-Var 'ResourceGroupName' $ResourceGroupNameRaw
+Assert-Var 'VmName'            $VmNameRaw
+
+# remove \r\n e espaços extras nas pontas
+$SubscriptionId    = ($SubscriptionIdRaw -replace '[\r\n]', '').Trim()
+$ResourceGroupName = ($ResourceGroupNameRaw -replace '[\r\n]', '').Trim()
+$VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
+
+# valida GUID
+try { [void][Guid]::Parse($SubscriptionId) } catch { throw "SubscriptionId inválido: '$SubscriptionIdRaw'" }
+
+Write-Output "Start-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
+
+# ===== Conecta com MI (sem selecionar assinatura) =====
+Connect-AzAccount -Identity | Out-Null
+
+# ===== Monta ResourceId S/ quebras =====
+$vmId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Compute/virtualMachines/$VmName"
+# checagem de espaços/quebras (debug amigável)
+if ($vmId -match '\s') { Write-Warning "vmId contém espaço/quebra. vmId=[<$vmId>]" }
+Write-Output "vmId=[<$vmId>]"
+
+$api = "2023-07-01"
+
+# ===== Lê instanceView =====
+$ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
+if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
+  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
+}
+$iv = $ivResp.Content | ConvertFrom-Json
+$power = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).displayStatus
+Write-Output "PowerState atual: $power"
+
+if ($power -eq 'VM running') {
+  Write-Output "Já está ligada. Nada a fazer."
+  return
+}
+
+# ===== Aciona START =====
+$resp = Invoke-AzRest -Path "$vmId/start?api-version=$api" -Method POST
+if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
+  throw "Falha ao iniciar VM. HTTP $($resp.StatusCode) $($resp.Content)"
+}
+Write-Output "Start acionado (202/200)."
+
+- Teste, salve e publique
+
+B) Stop:
+Stop-VM.ps1
+- name: stop-vm
+  runbook type: PowerShell
+  Runtime version: Powershell 7.2
+  script:
+param([object]$WebhookData)
+$ErrorActionPreference = 'Stop'
+
+function Assert-Var($name, $value) {
+  if ([string]::IsNullOrWhiteSpace([string]$value)) {
+    throw "A variável de Automation '$name' está vazia ou ausente."
+  }
+}
+
+# ===== Variáveis (sanitizadas) =====
+$SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
+$ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
+$VmNameRaw            = Get-AutomationVariable -Name 'VmName'
+
+Assert-Var 'SubscriptionId'    $SubscriptionIdRaw
+Assert-Var 'ResourceGroupName' $ResourceGroupNameRaw
+Assert-Var 'VmName'            $VmNameRaw
+
+$SubscriptionId    = ($SubscriptionIdRaw -replace '[\r\n]', '').Trim()
+$ResourceGroupName = ($ResourceGroupNameRaw -replace '[\r\n]', '').Trim()
+$VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
+
+try { [void][Guid]::Parse($SubscriptionId) } catch { throw "SubscriptionId inválido: '$SubscriptionIdRaw'" }
+
+Write-Output "Stop-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
+
+Connect-AzAccount -Identity | Out-Null
+
+$vmId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Compute/virtualMachines/$VmName"
+if ($vmId -match '\s') { Write-Warning "vmId contém espaço/quebra. vmId=[<$vmId>]" }
+Write-Output "vmId=[<$vmId>]"
+
+$api = "2023-07-01"
+
+# ===== Lê instanceView =====
+$ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
+if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
+  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
+}
+$iv = $ivResp.Content | ConvertFrom-Json
+$power = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).displayStatus
+Write-Output "PowerState atual: $power"
+
+if ($power -eq 'VM deallocated' -or $power -eq 'VM stopped') {
+  Write-Output "Já está desligada/dealocada. Nada a fazer."
+  return
+}
+
+# ===== Aciona DEALLOCATE =====
+$resp = Invoke-AzRest -Path "$vmId/deallocate?api-version=$api" -Method POST
+if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
+  throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode) $($resp.Content)"
+}
+Write-Output "Deallocate acionado (202/200)."
+
+- Teste, salve e publique
+
+
+7 - Schedules, criando os 2 agendamentos:
+
+A)
+nome:Start-Weekdays-0730
+Hora: 07:30
+Time zone: (UTC-03:00) São Paulo (ou E. South America Standard Time)
+Recurrence:
+Daily (todos os dias) ou Weekly (Seg–Sex) → escolha conforme necessidade
+Sem expiração (ou defina data limite se for POC)
+
+B)
+Stop-Weekdays-1830
+Hora: 18:30
+Time zone: (UTC-03:00) São Paulo (ou E. South America Standard Time)
+Recurrence:
+Daily (todos os dias) ou Weekly (Seg–Sex) → escolha conforme necessidade
+Sem expiração (ou defina data limite se for POC)
+
+8 - Vincular os schedules ao runbook:
+No Azure portal:
+- Vá em Runbooks → Start-VM → Link to schedule → Selecionar Start-Weekdays-0730.
+- Vá em Runbooks → Stop-VM → Link to schedule → Selecionar Stop-Weekdays-1830.
+
+9 - Testes e validação:
+A) Com a VM desligada, abra o runbook Start-VM → Start. A VM deverá ligar após alguns segundos
+B) Com a VM ligada, abra o runbook Stop-vm → Start. A VM deverá ser desligada após alguns segundos.
+
+10 - LImpeza do ambiente
+- Excluir o resource group e todos os recursos criados neste lab, mesmo que em outros resource groups. Isso mantém o ambiente limpo e sob controle do ponto de vista financeiro.
+
+
+
+
+
