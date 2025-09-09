@@ -151,3 +151,62 @@ if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
 }
 Write-Output "Start acionado (202/200)."
 
+
+### B) Stop-VM.ps1
+
+Portal → Automation Account → Runbooks → Create a runbook
+
+- Nome: `stop-vm`  
+- Tipo: PowerShell  
+- Runtime: PowerShell 7.2  
+
+```powershell
+param([object]$WebhookData)
+$ErrorActionPreference = 'Stop'
+
+function Assert-Var($name, $value) {
+  if ([string]::IsNullOrWhiteSpace([string]$value)) {
+    throw "A variável de Automation '$name' está vazia ou ausente."
+  }
+}
+
+# Variáveis
+$SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
+$ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
+$VmNameRaw            = Get-AutomationVariable -Name 'VmName'
+
+Assert-Var 'SubscriptionId'    $SubscriptionIdRaw
+Assert-Var 'ResourceGroupName' $ResourceGroupNameRaw
+Assert-Var 'VmName'            $VmNameRaw
+
+$SubscriptionId    = ($SubscriptionIdRaw -replace '[\r\n]', '').Trim()
+$ResourceGroupName = ($ResourceGroupNameRaw -replace '[\r\n]', '').Trim()
+$VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
+
+Write-Output "Stop-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
+
+Connect-AzAccount -Identity | Out-Null
+
+$vmId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Compute/virtualMachines/$VmName"
+$api = "2023-07-01"
+
+# InstanceView
+$ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
+if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
+  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
+}
+$iv = $ivResp.Content | ConvertFrom-Json
+$power = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).displayStatus
+Write-Output "PowerState atual: $power"
+
+if ($power -eq 'VM deallocated' -or $power -eq 'VM stopped') {
+  Write-Output "Já está desligada/dealocada. Nada a fazer."
+  return
+}
+
+# Deallocate
+$resp = Invoke-AzRest -Path "$vmId/deallocate?api-version=$api" -Method POST
+if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
+  throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode) $($resp.Content)"
+}
+Write-Output "Deallocate acionado (202/200)."
