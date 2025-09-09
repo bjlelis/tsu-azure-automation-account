@@ -149,16 +149,16 @@ $resp = Invoke-AzRest -Path "$vmId/start?api-version=$api" -Method POST
 if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
   throw "Falha ao iniciar VM. HTTP $($resp.StatusCode) $($resp.Content)"
 }
-Write-Output "Start acionado (202/200)."```
-
+Write-Output "Start acionado (202/200)."
+```
 
 ### B) Stop-VM.ps1
-
-Portal → Automation Account → Runbooks → Create a runbook
+Portal → Automation Account → **Process Automation → Runbooks → Create a runbook**
 
 - Nome: `stop-vm`  
-- Tipo: PowerShell  
-- Runtime: PowerShell 7.2  
+- Tipo: **PowerShell**  
+- Runtime: **PowerShell 7.2**  
+- Tags: `env:lab`  
 
 ```powershell
 param([object]$WebhookData)
@@ -210,3 +210,4 @@ if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
   throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode) $($resp.Content)"
 }
 Write-Output "Deallocate acionado (202/200)."
+```
