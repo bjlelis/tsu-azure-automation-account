@@ -115,6 +115,12 @@ function Assert-Var($name, $value) {
   }
 }
 
+function Get-MaskedSubId($id) {
+  try {
+    return ($id -replace '^(.{8})-.{4}-.{4}-.{4}-(.{12})$', '$1-****-****-****-$2')
+  } catch { return $id }
+}
+
 # Variáveis
 $SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
 $ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
@@ -128,9 +134,10 @@ $SubscriptionId    = ($SubscriptionIdRaw -replace '[\r\n]', '').Trim()
 $ResourceGroupName = ($ResourceGroupNameRaw -replace '[\r\n]', '').Trim()
 $VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
 
-try { [void][Guid]::Parse($SubscriptionId) } catch { throw "SubscriptionId inválido: '$SubscriptionIdRaw'" }
+try { [void][Guid]::Parse($SubscriptionId) } catch { throw "SubscriptionId inválido." }
 
-Write-Output "Start-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
+$maskedSub = Get-MaskedSubId $SubscriptionId
+Write-Output "Start-VM | Sub: $maskedSub | RG: $ResourceGroupName | VM: $VmName"
 
 # Login com a Managed Identity vinculada à Automation Account
 Connect-AzAccount -Identity | Out-Null
@@ -141,7 +148,8 @@ $api = "2023-07-01"
 # Lê o estado atual da VM
 $ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
 if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
-  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
+  $corrId = ($ivResp.Headers.Keys | ? { $_ -match 'x-ms-correlation-request-id' } | % { $ivResp.Headers[$_] }) -join ','
+  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode). CorrId: $corrId"
 }
 $iv = $ivResp.Content | ConvertFrom-Json
 $power = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).displayStatus
@@ -155,13 +163,12 @@ if ($power -eq 'VM running') {
 # Aciona start
 $resp = Invoke-AzRest -Path "$vmId/start?api-version=$api" -Method POST
 if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
-  throw "Falha ao iniciar VM. HTTP $($resp.StatusCode) $($resp.Content)"
+  $corrId = ($resp.Headers.Keys | ? { $_ -match 'x-ms-correlation-request-id' } | % { $resp.Headers[$_] }) -join ','
+  throw "Falha ao iniciar VM. HTTP $($resp.StatusCode). CorrId: $corrId"
 }
 Write-Output "Start acionado (202/200)."
 ```
 
-**Por que usar `Invoke-AzRest`?**  
-Funciona de forma direta com a API do Azure e evita dependência de muitos módulos. É rápido, previsível e fácil de debugar (você vê o **StatusCode** e o **Content**).
 
 **Dicas rápidas de troubleshooting:**
 - Se aparecer erro de permissão, verifique o **RBAC** da Managed Identity na VM (Virtual Machine Contributor).  
@@ -195,6 +202,12 @@ function Assert-Var($name, $value) {
   }
 }
 
+function Get-MaskedSubId($id) {
+  try {
+    return ($id -replace '^(.{8})-.{4}-.{4}-.{4}-(.{12})$', '$1-****-****-****-$2')
+  } catch { return $id }
+}
+
 # Variáveis
 $SubscriptionIdRaw    = Get-AutomationVariable -Name 'SubscriptionId'
 $ResourceGroupNameRaw = Get-AutomationVariable -Name 'ResourceGroupName'
@@ -208,7 +221,8 @@ $SubscriptionId    = ($SubscriptionIdRaw -replace '[\r\n]', '').Trim()
 $ResourceGroupName = ($ResourceGroupNameRaw -replace '[\r\n]', '').Trim()
 $VmName            = ($VmNameRaw -replace '[\r\n]', '').Trim()
 
-Write-Output "Stop-VM | Sub: $SubscriptionId | RG: $ResourceGroupName | VM: $VmName"
+$maskedSub = Get-MaskedSubId $SubscriptionId
+Write-Output "Stop-VM | Sub: $maskedSub | RG: $ResourceGroupName | VM: $VmName"
 
 # Login com a Managed Identity vinculada à Automation Account
 Connect-AzAccount -Identity | Out-Null
@@ -219,7 +233,8 @@ $api = "2023-07-01"
 # Lê o estado atual da VM
 $ivResp = Invoke-AzRest -Path "$vmId/instanceView?api-version=$api" -Method GET
 if ($ivResp.StatusCode -lt 200 -or $ivResp.StatusCode -ge 300) {
-  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode) $($ivResp.Content)"
+  $corrId = ($ivResp.Headers.Keys | ? { $_ -match 'x-ms-correlation-request-id' } | % { $ivResp.Headers[$_] }) -join ','
+  throw "Falha ao obter instanceView. HTTP $($ivResp.StatusCode). CorrId: $corrId"
 }
 $iv = $ivResp.Content | ConvertFrom-Json
 $power = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).displayStatus
@@ -233,9 +248,11 @@ if ($power -eq 'VM deallocated' -or $power -eq 'VM stopped') {
 # Aciona deallocate
 $resp = Invoke-AzRest -Path "$vmId/deallocate?api-version=$api" -Method POST
 if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
-  throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode) $($resp.Content)"
+  $corrId = ($resp.Headers.Keys | ? { $_ -match 'x-ms-correlation-request-id' } | % { $resp.Headers[$_] }) -join ','
+  throw "Falha ao desligar (deallocate) VM. HTTP $($resp.StatusCode). CorrId: $corrId"
 }
 Write-Output "Deallocate acionado (202/200)."
+
 ```
 
 **Observações úteis:**  
